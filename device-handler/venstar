@@ -1,0 +1,273 @@
+definition (name: "Fitzstat", namespace: "Fitzstat", author: "Me") {
+	capability "ThermostatHeatingSetpoint"
+	capability "thermostatOperatingState"
+	capability "TemperatureMeasurement"
+    capability "Configuration"
+	capability "Refresh"
+
+	attribute "outdoorTemp", "string"
+	attribute "outputPercentDisplay", "number"
+
+	command "getThermo"
+    command "switchMode"
+		command "switchFanMode"
+		command "lowerHeatingSetpoint"
+		command "heatingSetpointUp"
+        command "heatingSetpointDown"
+		command "coolingSetpointUp"
+		command "coolingSetpointDown"
+		command "poll"
+        command "switchMode"
+}
+import groovy.json.JsonSlurper
+simulator {
+	// Simulator stuff
+    
+	}
+    
+    preferences {
+       input ("version", "text", title: "Plugin Version 1.5", description:"", required: false, displayDuringSetup: true)
+       input "RelaySwitchDelay", "decimal", title: "Delay between relay switch on and off in seconds. Only Numbers 0 to 3.0 allowed. 0 value will remove delay and allow relay to function as a standard switch", description: "Numbers 0 to 3.1 allowed.", defaultValue: 0, required: false, displayDuringSetup: true    
+
+    }
+tiles(scale: 2) {
+	multiAttributeTile(name:"temperature", type: "thermostat", width: 6, height: 4){
+		tileAttribute ("device.temperature", key: "PRIMARY_CONTROL") {
+			attributeState("temperatureMeasurement", label:'${currentValue}°', unit: "dF", backgroundColor:"#269bd2")
+		}
+		tileAttribute("device.heatingSetpoint", key: "VALUE_CONTROL") {
+			attributeState("VALUE_UP", action: "heatingSetpointUp")
+			attributeState("VALUE_DOWN", action: "heatingSetpointDown")
+		}
+        
+		tileAttribute("device.thermostatOperatingState", key: "OPERATING_STATE",inactiveLabel: true) {
+			attributeState("idle",backgroundColor:"#44b621")
+			attributeState("heating",backgroundColor:"#ffa81e")
+            attributeState("cooling",backgroundColor:"#0000ff")
+		}
+		
+		tileAttribute("device.humidity", key: "SECONDARY_CONTROL") {
+            attributeState("humidity", label: '${currentValue}%', unit: "%", defaultState: true)
+        }
+		
+		tileAttribute("device.heatingSetpoint", key: "HEATING_SETPOINT") {
+			attributeState("default", label: '${currentValue}', unit: "dF")
+		}
+	}
+
+	// //Heating Set Point Controls
+	// controlTile("levelSliderControl", "device.heatingSetpoint", "slider", height: 1, width: 6, inactiveLabel: false, range:"(5..30)", decoration: "flat") {
+    // state "heatingSetpoint", action:"heatingSetpoint"
+	// }
+	
+standardTile("mode", "device.thermostatMode", width:2, height:2, inactiveLabel: false, decoration: "flat") {
+			state "off", action:"switchMode", nextState:"...", icon: "st.thermostat.heating-cooling-off"
+			state "heat", action:"switchMode", nextState:"...", icon: "st.thermostat.heat"
+			state "cool", action:"switchMode", nextState:"...", icon: "st.thermostat.cool"
+			state "auto", action:"switchMode", nextState:"...", icon: "st.thermostat.auto"
+			state "emergency heat", action:"switchMode", nextState:"...", icon: "st.thermostat.emergency-heat"
+			state "updating", label: "Updating...",nextState:"...", backgroundColor:"#ffffff"
+		}
+		standardTile("fanMode", "device.thermostatFanMode", width:2, height:2, inactiveLabel: false, decoration: "flat") {
+			state "auto", action:"switchFanMode", nextState:"...", icon: "st.thermostat.fan-auto"
+			state "on", action:"switchFanMode", nextState:"...", icon: "st.thermostat.fan-on"
+			state "circulate", action:"switchFanMode", nextState:"...", icon: "st.thermostat.fan-circulate"
+			state "...", label: "Updating...", nextState:"...", backgroundColor:"#ffffff"
+		}
+		standardTile("heatLevelDown", "device.heatingSetpoint", width: 2, height: 1, inactiveLabel: false, decoration: "flat") {
+            state "heatLevelUp", action:"heatingSetpointDown",icon:"st.thermostat.thermostat-left"
+		}
+		valueTile("heatingSetpoint", "device.heatingSetpoint", width:2, height:1, inactiveLabel: false, decoration: "flat") {
+			state "heatingSetpoint", label:'${currentValue}° heat', backgroundColor:"#ffffff"
+		}
+		standardTile("heatLevelUp", "device.heatingSetpoint", width: 2, height: 1, inactiveLabel: false, decoration: "flat") {
+            state "heatLevelUp", action:"heatingSetpointUp",  icon:"st.thermostat.thermostat-right"
+		}
+		standardTile("coolLevelDown", "device.coolingSetpoint", width:2, height:1, inactiveLabel: false, decoration: "flat") {
+			state "coolingSetpoint", action:"coolingSetpointDown", icon:"st.thermostat.thermostat-left"
+		}
+		valueTile("coolingSetpoint", "device.coolingSetpoint", width:2, height:1, inactiveLabel: false, decoration: "flat") {
+			state "coolingSetpoint", label:'${currentValue}° cool', backgroundColor:"#ffffff"
+		}
+		standardTile("coolLevelUp", "device.coolingSetpoint", width:2, height:1, inactiveLabel: false, decoration: "flat") {
+			state "coolingSetpoint", action:"coolingSetpointUp", icon:"st.thermostat.thermostat-right"
+		}
+		standardTile("thermostatOperatingState", "device.thermostatOperatingState", width: 2, height:1, decoration: "flat") {
+			state "thermostatOperatingState", label:'${currentValue}', backgroundColor:"#ffffff"
+		}
+		standardTile("refresh", "device.thermostatMode", width:2, height:1, inactiveLabel: false, decoration: "flat") {
+			state "default", action:"refresh.refresh", icon:"st.secondary.refresh"
+		}
+        
+	main (["temperature"])
+    details(["temperature",  "heatLevelDown", "heatingSetpoint", "heatLevelUp", "coolLevelDown",
+				"coolingSetpoint", "coolLevelUp", "mode", "fanMode", "thermostatOperatingState", "refresh"])
+}
+
+def initialize()
+{
+	log.info "Shackrats Camera Motion Child Integration Initialized"
+	subscribe (parseLanMessage(description))
+}
+
+
+def sendThermo(){
+	def result2 = new physicalgraph.device.HubAction(
+		method: "POST",
+		path: "/control?mode=" + state.mode + "&heattemp=" + state.heatingSetpoint + "&cooltemp=" + state.coolingSetpoint,
+		headers: [
+			HOST: "10.0.0.105:80"
+        ]
+		)
+		[
+        	sendHubCommand(result2),
+            "delay 1000"
+        ]
+		//sendEvent(name: "switch", value: "off")
+        log.debug "send to Thermo"   
+
+}
+
+
+
+def getThermo() {
+def result = new physicalgraph.device.HubAction(
+        method: "POST",
+        path: "/query/info",
+        headers: [
+                "HOST" : "10.0.0.105:80",
+                "Content-Type": "application/json"],
+                null,
+                [callback: parse]
+	)
+//    log.debug result.toString()  // Get Json body from thermostat
+    sendHubCommand(result);
+} 
+
+def parse(physicalgraph.device.HubResponse hubResponse) {
+
+def results = hubResponse.body
+ // log.debug "in parse: $hubResponse"
+ // log.debug "${hubResponse.body}"
+ // log.debug hubResponse.name
+  
+//log.debug results
+
+
+def slurper = new groovy.json.JsonSlurper()
+def msg = parseLanMessage(results)
+//def body = msg.body
+//def result = createEvent(slurper.parseText(body))
+def result = createEvent(slurper.parseText(results))
+//def body = msg.body
+//def result = createEvent(slurper.parseText(body))
+log.debug "results" + msg
+
+state.heatingSetpoint = result.heattemp
+state.coolingSetpoint = result.cooltemp
+state.mode = result.mode
+    
+sendEvent(name: "temperature", value:result.spacetemp )
+sendEvent(name: "humidity", value:result.hum )
+sendEvent(name: "heatingSetpoint", value: state.heatingSetpoint)
+sendEvent(name: "coolingSetpoint", value: state.coolingSetpoint)
+sendEvent(name: "thermostatMode", value: state.mode)
+
+
+if (result.mode == 1) {
+		sendEvent(name: "thermostatMode", value: "heat")
+	}
+	else if(result.mode == 2){
+		sendEvent(name: "thermostatMode", value: "cool")
+	}
+   else if(result.mode == 0){
+		sendEvent(name: "thermostatMode", value: "off")
+	}
+    
+
+
+if (result.state == 1) {
+		sendEvent(name: "thermostatOperatingState", value:'heating')
+	}
+	else if(result.state == 2){
+		sendEvent(name: "thermostatOperatingState", value:'cooling')
+	}
+    else if(result.state == 0){
+		sendEvent(name: "thermostatOperatingState", value:'idle')
+	}
+}
+
+def heatingSetpointUp(){
+
+state.heatingSetpoint = state.heatingSetpoint.toDouble() + 1
+sendEvent(name: 'heatingSetpoint', value: state.heatingSetpoint)
+sendThermo()		
+}
+
+def heatingSetpointDown(){
+
+state.heatingSetpoint = state.heatingSetpoint.toDouble() - 1
+sendEvent(name: 'heatingSetpoint', value: state.heatingSetpoint)
+sendThermo()		
+}
+
+def coolingSetpointUp(){
+
+state.coolingSetpoint = state.coolingSetpoint.toDouble() + 1
+sendEvent(name: 'coolingSetpoint', value: state.coolingSetpoint)
+sendThermo()		
+}
+
+def coolingSetpointDown(){
+
+state.coolingSetpoint = state.coolingSetpoint.toDouble() - 1
+sendEvent(name: 'coolingSetpoint', value: state.coolingSetpoint)
+sendThermo()		
+}
+
+def supportedThermostatModes = ["off"]
+
+def switchMode() {
+def currstate = device.currentState("thermostatMode").getValue()
+log.debug "$currstate";
+
+if (currstate == "heat") {
+state.mode = 2
+sendThermo()
+sendEvent(name: "thermostatMode", value: 'cool')
+
+}
+
+else if (currstate == "cool") {
+state.mode = 0
+sendThermo()
+sendEvent(name: "thermostatMode", value: 'off')
+
+}
+
+else if  (currstate == "off"){
+state.mode = 1
+sendThermo()
+sendEvent(name: "thermostatMode", value: 'heat')
+
+}
+}
+
+
+private String convertIPtoHex(ipAddress) {
+String hex = ipAddress.tokenize( '.').collect { String.format( '%02X', it.toInteger() ) }.join()
+return hex
+}
+
+private String convertPortToHex(port) {
+String hexport = port.toString().format( '%04X', port.toInteger() )
+return hexport
+}
+
+def refresh(){
+log.trace("Connexion verifiction - ${device.name}")
+def timeInSeconds = (Math.round(now()/1000))
+getThermo()
+
+}
+
